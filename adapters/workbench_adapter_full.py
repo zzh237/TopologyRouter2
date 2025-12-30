@@ -615,7 +615,11 @@ Original Task: {task}
 The team has agreed on this approach:
 {consensus_plan}
 
-Your job: Execute this plan NOW using the available tools. Follow the agreed plan and use the tools to complete the task."""
+Your job: Execute this plan NOW using the available tools.
+
+IMPORTANT: When using email.search_emails, use simple text queries like "nadia" instead of "from:nadia". The search tool does not support email syntax like "from:" or "to:".
+
+Follow the agreed plan and use the tools to complete the task."""
         
         if hasattr(self.agent, '__call__'):
             result = self.agent(execution_prompt)

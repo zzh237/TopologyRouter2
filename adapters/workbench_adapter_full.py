@@ -453,43 +453,129 @@ Provide a final summary of what was accomplished."""
         return subtasks
     
     async def _run_decentralized(self, task: str, n_agents: int, n_rounds: int = 2) -> Tuple[List[str], int]:
-        """Run Decentralized MAS: agents debate in rounds.
+        """Run Decentralized MAS: agents debate in rounds, then execute consensus.
         
         Formula: O(dnk) + O(1) where k=1, d=2
-        = d * n agents + 1 final consensus
+        = d * n agents (debate) + 1 final execution
+        
+        Key features:
+        - All-to-all communication: each agent sees all other agents' proposals
+        - d rounds of debate (reasoning only, no tool execution)
+        - Final consensus execution (execute the agreed-upon plan)
         """
         num_calls = 0
-        all_actions = []
         
-        # Round 1: Initial proposals
+        # Round 1: Initial proposals (reasoning only, no tool execution)
+        print(f"\n=== Decentralized Round 1: Initial Proposals (Reasoning) ===")
         proposals = []
         for i in range(n_agents):
+            agent_prompt = f"""You are Agent {i+1} in a decentralized multi-agent system.
+
+Task: {task}
+
+This is Round 1 (Proposal Phase). Propose your approach to solve this task.
+
+IMPORTANT: Only describe your plan, do NOT execute any tools yet. We will execute after reaching consensus.
+
+Provide:
+1. Your reasoning
+2. What tools you would use
+3. The sequence of actions"""
+            
             if hasattr(self.agent, '__call__'):
-                result = self.agent(task)
+                result = self.agent(agent_prompt)
             else:
-                result = self.agent.invoke({"input": task})
+                result = self.agent.invoke({"input": agent_prompt})
             num_calls += 1
             
-            actions = self._extract_tool_calls(result.get('intermediate_steps', []))
-            proposals.append(actions)
-            all_actions.extend(actions)
+            output = result.get('output', str(result))
+            proposals.append({
+                'agent_id': i+1,
+                'output': output,
+            })
+            print(f"Agent {i+1} proposed approach")
         
-        # Round 2: Debate (simplified: re-run with context)
+        # Round 2: Debate with peer-to-peer information sharing (reasoning only)
+        print(f"\n=== Decentralized Round 2: Debate (Reasoning) ===")
+        refined_proposals = []
         for i in range(n_agents):
-            debate_prompt = f"{task}\n\nOther agents proposed different approaches. Refine your answer."
+            # Share all other agents' proposals
+            peer_proposals = "\n\n".join([
+                f"Agent {p['agent_id']}'s proposal:\n{p['output']}"
+                for j, p in enumerate(proposals) if j != i
+            ])
+            
+            debate_prompt = f"""You are Agent {i+1} in a decentralized multi-agent system.
+
+Task: {task}
+
+Your initial proposal (Round 1):
+{proposals[i]['output']}
+
+Other agents' proposals:
+{peer_proposals}
+
+This is Round 2 (Debate Phase). Review the other agents' proposals:
+1. Which approach is best?
+2. Should you refine your proposal or adopt another agent's approach?
+3. Vote for the best approach
+
+IMPORTANT: Still do NOT execute tools. Just refine your reasoning and vote.
+
+Provide:
+1. Your refined reasoning
+2. Your vote: "I vote for Agent X's approach" or "I vote for my own approach"
+3. Final recommended action sequence"""
+            
             if hasattr(self.agent, '__call__'):
                 result = self.agent(debate_prompt)
             else:
                 result = self.agent.invoke({"input": debate_prompt})
             num_calls += 1
             
-            actions = self._extract_tool_calls(result.get('intermediate_steps', []))
-            all_actions.extend(actions)
+            output = result.get('output', str(result))
+            refined_proposals.append({
+                'agent_id': i+1,
+                'output': output,
+            })
+            print(f"Agent {i+1} voted and refined")
         
-        # Final consensus (O(1))
+        # Final consensus: Execute the agreed-upon plan
+        print(f"\n=== Decentralized Consensus: Execution ===")
+        
+        # Determine consensus (simple: use the most detailed/complete proposal)
+        consensus_plan = self._determine_consensus(proposals, refined_proposals)
+        
+        # Execute the consensus plan
+        execution_prompt = f"""Based on the consensus from debate:
+
+Task: {task}
+
+Agreed-upon approach:
+{consensus_plan}
+
+Now EXECUTE this plan using the appropriate tools."""
+        
+        if hasattr(self.agent, '__call__'):
+            result = self.agent(execution_prompt)
+        else:
+            result = self.agent.invoke({"input": execution_prompt})
         num_calls += 1
         
-        return all_actions, num_calls  # d*n + 1 calls
+        consensus_actions = self._extract_tool_calls(result.get('intermediate_steps', []))
+        print(f"Consensus execution: {len(consensus_actions)} actions")
+        
+        return consensus_actions, num_calls  # d*n + 1 calls
+    
+    def _determine_consensus(self, proposals: List[Dict], refined_proposals: List[Dict]) -> str:
+        """Determine consensus from debate rounds.
+        
+        Simple heuristic: Use the most detailed refined proposal.
+        In practice, would parse votes and use majority voting.
+        """
+        # Find the longest/most detailed refined proposal
+        best_proposal = max(refined_proposals, key=lambda p: len(p['output']))
+        return best_proposal['output']
     
     async def _run_hybrid(self, task: str, n_agents: int) -> Tuple[List[str], int]:
         """Run Hybrid MAS: orchestrator + peer communication."""

@@ -142,7 +142,7 @@ class PlancraftAdapterFull:
             state_text = observation.get("text", "")
             target = observation.get("target", example.target)
             
-            # Build prompt
+            # Build prompt with clear inventory display
             task_prompt = f"""Current Inventory State:
 {state_text}
 
@@ -150,19 +150,22 @@ Target: Craft {target}
 
 Available Actions:
 - move(from_slot, to_slot, quantity): Move items between slots
-- smelt(from_slot, to_slot, quantity): Smelt items (e.g., iron_ore -> iron_ingot)
+- smelt(from_slot, to_slot, quantity): Smelt items (e.g., iron_ore -> iron_ingot)  
 - stop(): Stop if task is complete or impossible
 
-IMPORTANT: You MUST respond in this format:
-Action: <tool_name>
-Action Input: <parameters>
+IMPORTANT: 
+1. You MUST respond in this format:
+   Action: <tool_name>
+   Action Input: <parameters>
+   
+   Example:
+   Action: move
+   Action Input: 10,1,1
 
-Example:
-Action: move
-Action Input: 10,1,1
+2. The inventory state above shows ALL available items. Read it carefully.
 
 What action should be taken next?"""
-            
+# 3. Do NOT move from a slot to itself (e.g., move I17 to I17).            
             # Select action based on topology
             if topology_idx == 0:  # Single-Agent
                 action_str, calls = await self._run_single_agent(task_prompt)

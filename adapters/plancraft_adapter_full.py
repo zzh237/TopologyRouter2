@@ -27,7 +27,7 @@ from topology_executor import TopologyExecutor
 class PlancraftAdapterFull:
     """Full PlanCraft adapter with LangChain agent and environment execution."""
     
-    def __init__(self, llm_name: str = "qwen-flash", max_steps: int = 30):
+    def __init__(self, llm_name: str = "qwen-flash", max_steps: int = 10):
         """
         Args:
             llm_name: LLM model name
@@ -390,39 +390,63 @@ What action should be taken next?"""
         """Parse agent's action string into PlanCraft format."""
         import re
         
-        action_str = action_str.strip().lower()
+        action_str = action_str.strip()
         
         # Check for stop
-        if "stop" in action_str:
+        if "stop" in action_str.lower():
             return "stop()"
         
-        # Try to extract move action
-        move_match = re.search(r'move\((\d+),\s*(\d+),\s*(\d+)\)', action_str)
+        # Helper to convert slot notation (I17 -> 26, A1 -> 1, etc.)
+        def parse_slot(slot_str: str) -> int:
+            slot_str = slot_str.strip().upper()
+            # Remove brackets if present
+            slot_str = slot_str.replace('[', '').replace(']', '')
+            
+            # Handle I1-I36 (inventory slots 10-45)
+            if slot_str.startswith('I'):
+                return int(slot_str[1:]) + 9
+            # Handle A1-C3 (crafting grid 1-9)
+            grid_map = {'A1': 1, 'A2': 2, 'A3': 3, 'B1': 4, 'B2': 5, 'B3': 6, 'C1': 7, 'C2': 8, 'C3': 9}
+            if slot_str in grid_map:
+                return grid_map[slot_str]
+            # Handle pure numbers
+            return int(slot_str)
+        
+        # Try to extract move action (supports I17, 17, [I17] formats)
+        move_match = re.search(r'move[:\(]?\s*(?:from\s+)?\[?([A-CI]?\d+)\]?\s*,?\s*(?:to\s+)?\[?([A-CI]?\d+)\]?\s*,?\s*(?:with\s+quantity\s+)?(\d+)', action_str, re.IGNORECASE)
         if move_match:
-            slot_from = int(move_match.group(1))
-            slot_to = int(move_match.group(2))
-            quantity = int(move_match.group(3))
-            
-            # Validate: slot_from != slot_to (same as PlanCraft source)
-            if slot_from == slot_to:
-                print(f"[Validation Error] Cannot move from slot {slot_from} to itself. Skipping action.")
+            try:
+                slot_from = parse_slot(move_match.group(1))
+                slot_to = parse_slot(move_match.group(2))
+                quantity = int(move_match.group(3))
+                
+                # Validate: slot_from != slot_to (same as PlanCraft source)
+                if slot_from == slot_to:
+                    print(f"[Validation Error] Cannot move from slot {slot_from} to itself. Skipping action.")
+                    return ""
+                
+                return f"move({slot_from}, {slot_to}, {quantity})"
+            except (ValueError, IndexError) as e:
+                print(f"[Parse Error] Failed to parse move action: {e}")
                 return ""
-            
-            return f"move({slot_from}, {slot_to}, {quantity})"
         
         # Try to extract smelt action
-        smelt_match = re.search(r'smelt\((\d+),\s*(\d+),\s*(\d+)\)', action_str)
+        smelt_match = re.search(r'smelt[:\(]?\s*(?:from\s+)?\[?([A-CI]?\d+)\]?\s*,?\s*(?:to\s+)?\[?([A-CI]?\d+)\]?\s*,?\s*(?:with\s+quantity\s+)?(\d+)', action_str, re.IGNORECASE)
         if smelt_match:
-            slot_from = int(smelt_match.group(1))
-            slot_to = int(smelt_match.group(2))
-            quantity = int(smelt_match.group(3))
-            
-            # Validate: slot_from != slot_to (same as PlanCraft source)
-            if slot_from == slot_to:
-                print(f"[Validation Error] Cannot smelt from slot {slot_from} to itself. Skipping action.")
+            try:
+                slot_from = parse_slot(smelt_match.group(1))
+                slot_to = parse_slot(smelt_match.group(2))
+                quantity = int(smelt_match.group(3))
+                
+                # Validate: slot_from != slot_to (same as PlanCraft source)
+                if slot_from == slot_to:
+                    print(f"[Validation Error] Cannot smelt from slot {slot_from} to itself. Skipping action.")
+                    return ""
+                
+                return f"smelt({slot_from}, {slot_to}, {quantity})"
+            except (ValueError, IndexError) as e:
+                print(f"[Parse Error] Failed to parse smelt action: {e}")
                 return ""
-            
-            return f"smelt({slot_from}, {slot_to}, {quantity})"
         
         # Default: no-op (empty string)
         return ""

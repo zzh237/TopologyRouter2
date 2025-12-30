@@ -41,7 +41,8 @@ ARCHITECTURES = {
 async def run_single_configuration(
     architecture_idx: int,
     model: str,
-    n_tasks: int = 50
+    n_tasks: int = 50,
+    baseline_costs: dict = None
 ):
     """Run one configuration (architecture + model)."""
     
@@ -59,13 +60,12 @@ async def run_single_configuration(
     queries = df.to_dict('records')[:n_tasks]
     
     results = []
-    baseline_tokens = None  # For calculating overhead
     
     for i, query in enumerate(queries, 1):
         print(f"\nTask {i}/{len(queries)}: {query['query'][:50]}...")
         
         start_time = time.time()
-        success, cost, metadata = await adapter.run_task(query)
+        success, cost, metadata = await adapter.run_task(query, topology_idx=architecture_idx)
         elapsed_time = time.time() - start_time
         
         # Calculate metrics
@@ -73,12 +73,12 @@ async def run_single_configuration(
         num_failed = sum(1 for a in metadata['predicted_actions'] 
                         if 'not found' in str(a).lower())
         
-        # Estimate overhead (compared to Single-Agent baseline)
-        if architecture_idx == 0:  # Single-Agent
-            if baseline_tokens is None:
-                baseline_tokens = cost
-        
-        overhead = ((cost - baseline_tokens) / baseline_tokens * 100) if baseline_tokens else 0
+        # Calculate overhead (compared to Single-Agent baseline for same task)
+        if baseline_costs and i in baseline_costs:
+            baseline_cost = baseline_costs[i]
+            overhead = ((cost - baseline_cost) / baseline_cost * 100) if baseline_cost > 0 else 0
+        else:
+            overhead = 0
         
         result = {
             'architecture': ARCHITECTURES[architecture_idx],
@@ -92,7 +92,10 @@ async def run_single_configuration(
             'communication_overhead_pct': overhead,
             'execution_time_sec': elapsed_time,
             'predicted_actions': metadata['predicted_actions'],
-            'ground_truth': query['answer']
+            'ground_truth': query['answer'],
+            'num_llm_calls': metadata['num_llm_calls'],
+            'sequential_depth': metadata['sequential_depth'],
+            'comm_overhead': metadata['comm_overhead'],
         }
         
         results.append(result)
@@ -124,12 +127,32 @@ async def run_controlled_study(
         print(f"REPEAT {repeat + 1}/{n_repeats}")
         print(f"{'#'*80}")
         
-        for arch_idx in ARCHITECTURES.keys():
+        # First run Single-Agent to get baseline costs
+        baseline_costs = {}
+        for model in models:
+            print(f"\n[Baseline] Running Single-Agent for {model}...")
+            baseline_results = await run_single_configuration(
+                architecture_idx=0,
+                model=model,
+                n_tasks=n_tasks,
+                baseline_costs=None
+            )
+            
+            # Store baseline costs per task
+            for r in baseline_results:
+                baseline_costs[r['task_id']] = r['total_tokens']
+                r['repeat'] = repeat + 1
+            
+            all_results.extend(baseline_results)
+        
+        # Then run other architectures with baseline for overhead calculation
+        for arch_idx in [1, 2, 3, 4]:  # Skip 0 (already done)
             for model in models:
                 results = await run_single_configuration(
                     architecture_idx=arch_idx,
                     model=model,
-                    n_tasks=n_tasks
+                    n_tasks=n_tasks,
+                    baseline_costs=baseline_costs
                 )
                 
                 # Add repeat number

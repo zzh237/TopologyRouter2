@@ -496,7 +496,7 @@ async def main():
     print("="*80)
     
     # Create adapter
-    adapter = PlancraftAdapterFull(llm_name="qwen-flash", max_steps=30)
+    adapter = PlancraftAdapterFull(llm_name="qwen-flash", max_steps=5)
     
     # Load examples
     examples = adapter._load_examples(split="val")

@@ -547,9 +547,8 @@ Give your complete answer now without using any tools."""
                 'agent_id': i+1,
                 'output': output,
             })
-            print(f"Agent {i+1} proposed approach")
-            if i == 0:  # Debug: print first proposal
-                print(f"  Sample: {output[:200]}...")
+            print(f"\nAgent {i+1} proposed approach:")
+            print(f"  {output[:300]}...\n")
         
         # Round 2: Debate with peer-to-peer information sharing (reasoning only)
         print(f"\n=== Decentralized Round 2: Debate (Reasoning) ===")
@@ -560,6 +559,11 @@ Give your complete answer now without using any tools."""
                 f"Agent {p['agent_id']}'s proposal:\n{p['output']}"
                 for j, p in enumerate(proposals) if j != i
             ])
+            
+            # Debug: print what Agent i sees
+            if i == 0:
+                print(f"\n[DEBUG] Agent {i+1} sees these peer proposals:")
+                print(f"{peer_proposals[:500]}...\n")
             
             debate_prompt = f"""You are Agent {i+1} in a decentralized multi-agent system.
 
@@ -596,9 +600,8 @@ Give your complete answer now without using any tools."""
                 'agent_id': i+1,
                 'output': output,
             })
-            print(f"Agent {i+1} voted and refined")
-            if i == 0:  # Debug: print first vote
-                print(f"  Sample: {output[:200]}...")
+            print(f"\nAgent {i+1} voted and refined:")
+            print(f"  {output[:300]}...\n")
         
         # Final consensus: Execute the agreed-upon plan
         print(f"\n=== Decentralized Consensus: Execution ===")

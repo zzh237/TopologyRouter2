@@ -153,7 +153,15 @@ Available Actions:
 - smelt(from_slot, to_slot, quantity): Smelt items (e.g., iron_ore -> iron_ingot)
 - stop(): Stop if task is complete or impossible
 
-What action should be taken next? Respond with a single action."""
+IMPORTANT: You MUST respond in this format:
+Action: <tool_name>
+Action Input: <parameters>
+
+Example:
+Action: move
+Action Input: 10,1,1
+
+What action should be taken next?"""
             
             # Select action based on topology
             if topology_idx == 0:  # Single-Agent

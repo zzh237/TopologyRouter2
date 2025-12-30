@@ -40,15 +40,17 @@ class PlancraftAdapterFull:
         self.agent = self._create_langchain_agent()
     
     def _create_langchain_agent(self):
-        """Create LLM for PlanCraft action selection (NOT an agent)."""
+        """Create LangChain agent for PlanCraft action selection."""
         from langchain_openai import ChatOpenAI
+        from langchain.agents import initialize_agent, AgentType
+        from langchain.tools import Tool
         from dotenv import load_dotenv
         
         load_dotenv()
         api_key = os.getenv("API_KEY")
         base_url = os.getenv("BASE_URL")
         
-        # Create LLM (not agent)
+        # Create LLM
         llm = ChatOpenAI(
             model_name=self.llm_name,
             openai_api_key=api_key,
@@ -56,7 +58,37 @@ class PlancraftAdapterFull:
             temperature=0,
         )
         
-        return llm
+        # Define PlanCraft action tools
+        tools = [
+            Tool(
+                name="move",
+                func=lambda x: f"move({x})",
+                description="Move items between slots. Format: from_slot,to_slot,quantity (e.g., '10,1,1')"
+            ),
+            Tool(
+                name="smelt",
+                func=lambda x: f"smelt({x})",
+                description="Smelt items (e.g., iron_ore -> iron_ingot). Format: from_slot,to_slot,quantity"
+            ),
+            Tool(
+                name="stop",
+                func=lambda x: "stop()",
+                description="Stop if task is complete or impossible"
+            ),
+        ]
+        
+        # Create agent
+        agent = initialize_agent(
+            llm=llm,
+            agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+            tools=tools,
+            verbose=True,
+            return_intermediate_steps=True,
+            max_iterations=3,
+            handle_parsing_errors=True,  # Handle LLM output parsing errors
+        )
+        
+        return agent
     
     def _load_examples(self, split: str = "val") -> List:
         """Load PlanCraft examples."""
@@ -110,35 +142,26 @@ class PlancraftAdapterFull:
             state_text = observation.get("text", "")
             target = observation.get("target", example.target)
             
-            # Build prompt with PlanCraft system prompt and examples
-            task_prompt = f"""You are crafting in Minecraft. You need to decide on the next action.
-
-Crafting Grid: The crafting table is organized into a 3x3 grid. Each slot in the grid has a unique identifier:
-    - Top row: [A1] [A2] [A3]
-    - Middle row: [B1] [B2] [B3]
-    - Bottom row: [C1] [C2] [C3]
-
-The output of the crafting process is placed in a designated output slot labeled [0]. You cannot move or smelt items directly into slot [0].
-
-Inventory Slots: The remaining inventory slots (outside of the crafting grid) are used for storing items. These slots are labeled as [I1] to [I36].
-
-Available Actions:
-- move: from [Source] to [Target] with quantity N - Transfer items between slots
-- smelt: from [Source] to [Target] with quantity N - Smelt items in a furnace
-- impossible: <reason> - Stop if task is impossible
-
-Constraints:
-- You cannot move or smelt items into [0]
-- If an item is not in slot [0] then the recipe is incorrect
-- You need to move items from [0] to a free inventory slot to complete the crafting process
-
-Current Inventory State:
+            # Build prompt
+            task_prompt = f"""Current Inventory State:
 {state_text}
 
 Target: Craft {target}
 
-What action should be taken next? Respond with the action in the format:
-move: from [Source] to [Target] with quantity N"""
+Available Actions:
+- move(from_slot, to_slot, quantity): Move items between slots
+- smelt(from_slot, to_slot, quantity): Smelt items (e.g., iron_ore -> iron_ingot)
+- stop(): Stop if task is complete or impossible
+
+IMPORTANT: You MUST respond in this format:
+Action: <tool_name>
+Action Input: <parameters>
+
+Example:
+Action: move
+Action Input: 10,1,1
+
+What action should be taken next?"""
             
             # Select action based on topology
             if topology_idx == 0:  # Single-Agent
@@ -270,12 +293,29 @@ move: from [Source] to [Target] with quantity N"""
         return {}
     
     async def _run_single_agent(self, task: str) -> Tuple[str, int]:
-        """Run single agent - direct LLM call."""
-        from langchain.schema import HumanMessage
+        """Run single agent."""
+        if hasattr(self.agent, '__call__'):
+            result = self.agent(task)
+        else:
+            result = self.agent.invoke({"input": task})
         
-        # Direct LLM call
-        response = self.agent.invoke([HumanMessage(content=task)])
-        output = response.content if hasattr(response, 'content') else str(response)
+        # Extract intermediate steps to get actual actions
+        if 'intermediate_steps' in result and result['intermediate_steps']:
+            # Get the last action from intermediate steps
+            last_step = result['intermediate_steps'][-1]
+            if isinstance(last_step, tuple) and len(last_step) >= 2:
+                action, observation = last_step
+                # Extract action input
+                if hasattr(action, 'tool_input'):
+                    output = str(action.tool_input)
+                elif hasattr(action, 'tool') and hasattr(action, 'tool_input'):
+                    output = f"{action.tool}: {action.tool_input}"
+                else:
+                    output = str(action)
+            else:
+                output = result.get('output', str(result))
+        else:
+            output = result.get('output', str(result))
         
         return output, 1
     
@@ -363,69 +403,86 @@ move: from [Source] to [Target] with quantity N"""
         
         return result.get('output', str(result)), c_calls + 1
     
-    def _parse_action(self, action_str: str):
+    def _parse_action(self, action_str: str) -> str:
         """Parse agent's action string into PlanCraft format."""
         import re
         
         action_str = action_str.strip()
-        print(f"[DEBUG] Parsing action: {action_str[:100]}...")
+        print(f"[DEBUG] Parsing action: {action_str[:100]}...")  # Debug
         
-        # Check for impossible
-        if "impossible" in action_str.lower():
-            return "impossible: task cannot be completed"
+        # Check for stop
+        if "stop" in action_str.lower():
+            return "stop()"
         
-        # Helper to convert slot notation
+        # Helper to convert slot notation (I17 -> 26, A1 -> 1, etc.)
         def parse_slot(slot_str: str) -> int:
-            slot_str = slot_str.strip().upper().replace('[', '').replace(']', '')
+            slot_str = slot_str.strip().upper()
+            slot_str = slot_str.replace('[', '').replace(']', '')
+            
             if slot_str.startswith('I'):
                 return int(slot_str[1:]) + 9
             grid_map = {'A1': 1, 'A2': 2, 'A3': 3, 'B1': 4, 'B2': 5, 'B3': 6, 'C1': 7, 'C2': 8, 'C3': 9}
             if slot_str in grid_map:
                 return grid_map[slot_str]
-            if slot_str == '0':
-                return 0
             return int(slot_str)
         
-        # Pattern 1: PlanCraft standard format "move: from [I17] to [A1] with quantity 1"
-        standard_match = re.search(r'(move|smelt):\s*from\s*\[?([A-CI0-9]+)\]?\s*to\s*\[?([A-CI0-9]+)\]?\s*with\s*quantity\s*(\d+)', action_str, re.IGNORECASE)
-        if standard_match:
-            print(f"[DEBUG] Standard format matched: {standard_match.groups()}")
-            try:
-                action_type = standard_match.group(1).lower()
-                slot_from = parse_slot(standard_match.group(2))
-                slot_to = parse_slot(standard_match.group(3))
-                quantity = int(standard_match.group(4))
-                print(f"[DEBUG] Parsed: {action_type}({slot_from}, {slot_to}, {quantity})")
-                
-                if slot_from == slot_to:
-                    print(f"[Validation Error] Cannot {action_type} from slot {slot_from} to itself.")
-                    return ""
-                
-                return f"{action_type}({slot_from}, {slot_to}, {quantity})"
-            except (ValueError, IndexError) as e:
-                print(f"[Parse Error] Failed to parse: {e}")
-                return ""
-        
-        # Pattern 2: Fallback for other formats "I17, I1, 1"
-        simple_match = re.search(r'\[?([A-CI0-9]+)\]?\s*,\s*\[?([A-CI0-9]+)\]?\s*,\s*(\d+)', action_str, re.IGNORECASE)
+        # Pattern 1: LangChain format "Action Input: I17, I1, 1" or just "I17, I1, 1"
+        simple_match = re.search(r'(?:Action Input:\s*)?\[?([A-C]?[0-9]+|I[0-9]+)\]?\s*,\s*\[?([A-C]?[0-9]+|I[0-9]+)\]?\s*,\s*(\d+)', action_str, re.IGNORECASE)
         if simple_match:
-            print(f"[DEBUG] Simple format matched: {simple_match.groups()}")
+            print(f"[DEBUG] Pattern 1 matched: {simple_match.groups()}")  # Debug
             try:
                 slot_from = parse_slot(simple_match.group(1))
                 slot_to = parse_slot(simple_match.group(2))
                 quantity = int(simple_match.group(3))
+                print(f"[DEBUG] Parsed slots: from={slot_from}, to={slot_to}, qty={quantity}")  # Debug
                 
                 if slot_from == slot_to:
-                    print(f"[Validation Error] Cannot move from slot {slot_from} to itself.")
+                    print(f"[Validation Error] Cannot move from slot {slot_from} to itself. Skipping action.")
                     return ""
                 
-                action_type = "smelt" if "smelt" in action_str.lower() else "move"
-                return f"{action_type}({slot_from}, {slot_to}, {quantity})"
+                if "smelt" in action_str.lower():
+                    return f"smelt({slot_from}, {slot_to}, {quantity})"
+                else:
+                    return f"move({slot_from}, {slot_to}, {quantity})"
             except (ValueError, IndexError) as e:
-                print(f"[Parse Error] Failed to parse: {e}")
+                print(f"[Parse Error] Failed to parse action: {e}")
                 return ""
         
-        print(f"[DEBUG] No pattern matched")
+        # Pattern 2: PlanCraft format "move: from [I17] to [I1] with quantity 1"
+        move_match = re.search(r'move[:\(]?\s*(?:from\s+)?\[?([A-C]?[0-9]+|I[0-9]+)\]?\s*,?\s*(?:to\s+)?\[?([A-C]?[0-9]+|I[0-9]+)\]?\s*,?\s*(?:with\s+quantity\s+)?(\d+)', action_str, re.IGNORECASE)
+        if move_match:
+            try:
+                slot_from = parse_slot(move_match.group(1))
+                slot_to = parse_slot(move_match.group(2))
+                quantity = int(move_match.group(3))
+                
+                if slot_from == slot_to:
+                    print(f"[Validation Error] Cannot move from slot {slot_from} to itself. Skipping action.")
+                    return ""
+                
+                return f"move({slot_from}, {slot_to}, {quantity})"
+            except (ValueError, IndexError) as e:
+                print(f"[Parse Error] Failed to parse move action: {e}")
+                return ""
+        
+        # Pattern 3: Smelt format
+        smelt_match = re.search(r'smelt[:\(]?\s*(?:from\s+)?\[?([A-C]?[0-9]+|I[0-9]+)\]?\s*,?\s*(?:to\s+)?\[?([A-C]?[0-9]+|I[0-9]+)\]?\s*,?\s*(?:with\s+quantity\s+)?(\d+)', action_str, re.IGNORECASE)
+        if smelt_match:
+            try:
+                slot_from = parse_slot(smelt_match.group(1))
+                slot_to = parse_slot(smelt_match.group(2))
+                quantity = int(smelt_match.group(3))
+                
+                if slot_from == slot_to:
+                    print(f"[Validation Error] Cannot smelt from slot {slot_from} to itself. Skipping action.")
+                    return ""
+                
+                return f"smelt({slot_from}, {slot_to}, {quantity})"
+            except (ValueError, IndexError) as e:
+                print(f"[Parse Error] Failed to parse smelt action: {e}")
+                return ""
+        
+        print(f"[DEBUG] No pattern matched, returning empty string")  # Debug
         return ""
 
 

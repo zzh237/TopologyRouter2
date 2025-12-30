@@ -465,6 +465,15 @@ Provide a final summary of what was accomplished."""
         """
         num_calls = 0
         
+        # Create reasoning-only LLM (no tools) for debate rounds
+        from langchain_openai import ChatOpenAI
+        reasoning_llm = ChatOpenAI(
+            model_name=self.llm_name,
+            openai_api_key=os.getenv("API_KEY"),
+            openai_api_base=os.getenv("BASE_URL"),
+            temperature=0,
+        )
+        
         # Round 1: Initial proposals (reasoning only, no tool execution)
         print(f"\n=== Decentralized Round 1: Initial Proposals (Reasoning) ===")
         proposals = []
@@ -482,13 +491,11 @@ Provide:
 2. What tools you would use
 3. The sequence of actions"""
             
-            if hasattr(self.agent, '__call__'):
-                result = self.agent(agent_prompt)
-            else:
-                result = self.agent.invoke({"input": agent_prompt})
+            # Use reasoning-only LLM (no tool execution)
+            result = reasoning_llm.invoke(agent_prompt)
             num_calls += 1
             
-            output = result.get('output', str(result))
+            output = result.content if hasattr(result, 'content') else str(result)
             proposals.append({
                 'agent_id': i+1,
                 'output': output,
@@ -527,13 +534,11 @@ Provide:
 2. Your vote: "I vote for Agent X's approach" or "I vote for my own approach"
 3. Final recommended action sequence"""
             
-            if hasattr(self.agent, '__call__'):
-                result = self.agent(debate_prompt)
-            else:
-                result = self.agent.invoke({"input": debate_prompt})
+            # Use reasoning-only LLM (no tool execution)
+            result = reasoning_llm.invoke(debate_prompt)
             num_calls += 1
             
-            output = result.get('output', str(result))
+            output = result.content if hasattr(result, 'content') else str(result)
             refined_proposals.append({
                 'agent_id': i+1,
                 'output': output,

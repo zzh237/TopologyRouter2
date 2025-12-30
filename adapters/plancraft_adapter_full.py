@@ -142,7 +142,7 @@ class PlancraftAdapterFull:
             state_text = observation.get("text", "")
             target = observation.get("target", example.target)
             
-            # Build prompt with clear inventory display
+            # Build prompt
             task_prompt = f"""Current Inventory State:
 {state_text}
 
@@ -150,22 +150,19 @@ Target: Craft {target}
 
 Available Actions:
 - move(from_slot, to_slot, quantity): Move items between slots
-- smelt(from_slot, to_slot, quantity): Smelt items (e.g., iron_ore -> iron_ingot)  
+- smelt(from_slot, to_slot, quantity): Smelt items (e.g., iron_ore -> iron_ingot)
 - stop(): Stop if task is complete or impossible
 
-IMPORTANT: 
-1. You MUST respond in this format:
-   Action: <tool_name>
-   Action Input: <parameters>
-   
-   Example:
-   Action: move
-   Action Input: 10,1,1
+IMPORTANT: You MUST respond in this format:
+Action: <tool_name>
+Action Input: <parameters>
 
-2. The inventory state above shows ALL available items. Read it carefully.
+Example:
+Action: move
+Action Input: 10,1,1
 
 What action should be taken next?"""
-# 3. Do NOT move from a slot to itself (e.g., move I17 to I17).            
+            
             # Select action based on topology
             if topology_idx == 0:  # Single-Agent
                 action_str, calls = await self._run_single_agent(task_prompt)
@@ -402,12 +399,30 @@ What action should be taken next?"""
         # Try to extract move action
         move_match = re.search(r'move\((\d+),\s*(\d+),\s*(\d+)\)', action_str)
         if move_match:
-            return f"move({move_match.group(1)}, {move_match.group(2)}, {move_match.group(3)})"
+            slot_from = int(move_match.group(1))
+            slot_to = int(move_match.group(2))
+            quantity = int(move_match.group(3))
+            
+            # Validate: slot_from != slot_to (same as PlanCraft source)
+            if slot_from == slot_to:
+                print(f"[Validation Error] Cannot move from slot {slot_from} to itself. Skipping action.")
+                return ""
+            
+            return f"move({slot_from}, {slot_to}, {quantity})"
         
         # Try to extract smelt action
         smelt_match = re.search(r'smelt\((\d+),\s*(\d+),\s*(\d+)\)', action_str)
         if smelt_match:
-            return f"smelt({smelt_match.group(1)}, {smelt_match.group(2)}, {smelt_match.group(3)})"
+            slot_from = int(smelt_match.group(1))
+            slot_to = int(smelt_match.group(2))
+            quantity = int(smelt_match.group(3))
+            
+            # Validate: slot_from != slot_to (same as PlanCraft source)
+            if slot_from == slot_to:
+                print(f"[Validation Error] Cannot smelt from slot {slot_from} to itself. Skipping action.")
+                return ""
+            
+            return f"smelt({slot_from}, {slot_to}, {quantity})"
         
         # Default: no-op (empty string)
         return ""

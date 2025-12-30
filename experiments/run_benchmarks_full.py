@@ -137,7 +137,7 @@ async def run_plancraft_full(n_tasks: int = 10, force_topology: int = None):
     print("="*80)
     
     system = TopologyRoutingSystem(llm_name="qwen-flash", domain="plancraft", n_rounds=3)
-    adapter = PlancraftAdapterFull(llm_name="qwen-flash", max_steps=30)
+    adapter = PlancraftAdapterFull(llm_name="qwen-flash", max_steps=10)
     
     # Load examples
     examples = adapter._load_examples(split="val")[:n_tasks]

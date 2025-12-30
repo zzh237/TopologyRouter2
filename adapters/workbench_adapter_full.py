@@ -465,15 +465,6 @@ Provide a final summary of what was accomplished."""
         """
         num_calls = 0
         
-        # Create reasoning-only LLM (no tools) for debate rounds
-        from langchain_openai import ChatOpenAI
-        reasoning_llm = ChatOpenAI(
-            model_name=self.llm_name,
-            openai_api_key=os.getenv("API_KEY"),
-            openai_api_base=os.getenv("BASE_URL"),
-            temperature=0,
-        )
-        
         # Round 1: Initial proposals (reasoning only, no tool execution)
         print(f"\n=== Decentralized Round 1: Initial Proposals (Reasoning) ===")
         proposals = []
@@ -491,18 +482,18 @@ Provide:
 2. What tools you would use
 3. The sequence of actions"""
             
-            # Use reasoning-only LLM (no tool execution)
-            result = reasoning_llm.invoke(agent_prompt)
+            if hasattr(self.agent, '__call__'):
+                result = self.agent(agent_prompt)
+            else:
+                result = self.agent.invoke({"input": agent_prompt})
             num_calls += 1
             
-            output = result.content if hasattr(result, 'content') else str(result)
+            output = result.get('output', str(result))
             proposals.append({
                 'agent_id': i+1,
                 'output': output,
             })
             print(f"Agent {i+1} proposed approach")
-            if i == 0:  # Print first proposal for debugging
-                print(f"  Sample: {output[:200]}...")
         
         # Round 2: Debate with peer-to-peer information sharing (reasoning only)
         print(f"\n=== Decentralized Round 2: Debate (Reasoning) ===")
@@ -536,35 +527,34 @@ Provide:
 2. Your vote: "I vote for Agent X's approach" or "I vote for my own approach"
 3. Final recommended action sequence"""
             
-            # Use reasoning-only LLM (no tool execution)
-            result = reasoning_llm.invoke(debate_prompt)
+            if hasattr(self.agent, '__call__'):
+                result = self.agent(debate_prompt)
+            else:
+                result = self.agent.invoke({"input": debate_prompt})
             num_calls += 1
             
-            output = result.content if hasattr(result, 'content') else str(result)
+            output = result.get('output', str(result))
             refined_proposals.append({
                 'agent_id': i+1,
                 'output': output,
             })
             print(f"Agent {i+1} voted and refined")
-            if i == 0:  # Print first vote for debugging
-                print(f"  Sample: {output[:200]}...")
         
         # Final consensus: Execute the agreed-upon plan
         print(f"\n=== Decentralized Consensus: Execution ===")
         
         # Determine consensus (simple: use the most detailed/complete proposal)
         consensus_plan = self._determine_consensus(proposals, refined_proposals)
-        print(f"Consensus plan (first 300 chars): {consensus_plan[:300]}...")
         
-        # Execute the consensus plan with clearer instructions
-        execution_prompt = f"""You are executing a task based on team consensus.
+        # Execute the consensus plan
+        execution_prompt = f"""Based on the consensus from debate:
 
-Original Task: {task}
+Task: {task}
 
-The team has agreed on this approach:
+Agreed-upon approach:
 {consensus_plan}
 
-Your job: Execute this plan NOW using the available tools. Do not overthink or refuse - just follow the agreed plan and use the tools to complete the task."""
+Now EXECUTE this plan using the appropriate tools."""
         
         if hasattr(self.agent, '__call__'):
             result = self.agent(execution_prompt)
@@ -574,8 +564,6 @@ Your job: Execute this plan NOW using the available tools. Do not overthink or r
         
         consensus_actions = self._extract_tool_calls(result.get('intermediate_steps', []))
         print(f"Consensus execution: {len(consensus_actions)} actions")
-        if consensus_actions:
-            print(f"  Actions: {consensus_actions}")
         
         return consensus_actions, num_calls  # d*n + 1 calls
     

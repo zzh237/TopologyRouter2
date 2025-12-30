@@ -172,6 +172,12 @@ What action should be taken next? Respond with a single action."""
             
             # Parse and execute action
             parsed_action = self._parse_action(action_str)
+            
+            # Skip if parsing failed (empty string)
+            if not parsed_action:
+                print(f"  [Warning] Failed to parse action: {action_str[:100]}")
+                continue  # Don't count as environment step
+            
             action_history.append(parsed_action)
             
             observation, reward, terminated, truncated, info = env.step(parsed_action)
@@ -379,26 +385,52 @@ What action should be taken next? Respond with a single action."""
         return result.get('output', str(result)), c_calls + 1
     
     def _parse_action(self, action_str: str) -> str:
-        """Parse agent's action string into PlanCraft format."""
+        """Parse agent's action string into PlanCraft official format.
+        
+        Official PlanCraft format:
+        - move: from [I17] to [I35] with quantity 1
+        - smelt: from [I10] to [I11] with quantity 1
+        - impossible: <reason>
+        
+        Slot format: [0], [A1]-[C3], [I1]-[I36]
+        """
         import re
         
-        action_str = action_str.strip().lower()
+        action_str = action_str.strip()
         
-        # Check for stop
-        if "stop" in action_str:
-            return "stop()"
+        # Check for impossible/stop
+        if "impossible" in action_str.lower() or "stop" in action_str.lower():
+            return "impossible: task complete or impossible"
         
-        # Try to extract move action
-        move_match = re.search(r'move\((\d+),\s*(\d+),\s*(\d+)\)', action_str)
+        # Try to match move action
+        # Official format: "move: from [I17] to [I35] with quantity 1"
+        move_match = re.search(r'move.*from\s*\[?([ABCI]?\d+)\]?.*to\s*\[?([ABCI]?\d+)\]?.*(?:quantity|with)\s*(\d+)', action_str, re.IGNORECASE)
         if move_match:
-            return f"move({move_match.group(1)}, {move_match.group(2)}, {move_match.group(3)})"
+            from_slot = move_match.group(1)
+            to_slot = move_match.group(2)
+            qty = move_match.group(3)
+            # Normalize to official format [I17]
+            if not from_slot.startswith('['):
+                from_slot = f"[{from_slot}]" if from_slot[0] in 'ABCI' else f"[I{from_slot}]"
+            if not to_slot.startswith('['):
+                to_slot = f"[{to_slot}]" if to_slot[0] in 'ABCI' else f"[I{to_slot}]"
+            return f"move: from {from_slot} to {to_slot} with quantity {qty}"
         
-        # Try to extract smelt action
-        smelt_match = re.search(r'smelt\((\d+),\s*(\d+),\s*(\d+)\)', action_str)
+        # Try to match smelt action
+        # Official format: "smelt: from [I10] to [I11] with quantity 1"
+        smelt_match = re.search(r'smelt.*from\s*\[?([ABCI]?\d+)\]?.*to\s*\[?([ABCI]?\d+)\]?.*(?:quantity|with)\s*(\d+)', action_str, re.IGNORECASE)
         if smelt_match:
-            return f"smelt({smelt_match.group(1)}, {smelt_match.group(2)}, {smelt_match.group(3)})"
+            from_slot = smelt_match.group(1)
+            to_slot = smelt_match.group(2)
+            qty = smelt_match.group(3)
+            # Normalize to official format
+            if not from_slot.startswith('['):
+                from_slot = f"[{from_slot}]" if from_slot[0] in 'ABCI' else f"[I{from_slot}]"
+            if not to_slot.startswith('['):
+                to_slot = f"[{to_slot}]" if to_slot[0] in 'ABCI' else f"[I{to_slot}]"
+            return f"smelt: from {from_slot} to {to_slot} with quantity {qty}"
         
-        # Default: no-op (empty string)
+        # Default: return empty string (parsing failed)
         return ""
 
 

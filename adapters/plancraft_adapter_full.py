@@ -40,17 +40,15 @@ class PlancraftAdapterFull:
         self.agent = self._create_langchain_agent()
     
     def _create_langchain_agent(self):
-        """Create LangChain agent for PlanCraft action selection."""
+        """Create LLM for PlanCraft action selection (NOT an agent)."""
         from langchain_openai import ChatOpenAI
-        from langchain.agents import initialize_agent, AgentType
-        from langchain.tools import Tool
         from dotenv import load_dotenv
         
         load_dotenv()
         api_key = os.getenv("API_KEY")
         base_url = os.getenv("BASE_URL")
         
-        # Create LLM
+        # Create LLM (not agent)
         llm = ChatOpenAI(
             model_name=self.llm_name,
             openai_api_key=api_key,
@@ -58,37 +56,7 @@ class PlancraftAdapterFull:
             temperature=0,
         )
         
-        # Define PlanCraft action tools
-        tools = [
-            Tool(
-                name="move",
-                func=lambda x: f"move({x})",
-                description="Move items between slots. Format: from_slot,to_slot,quantity (e.g., '10,1,1')"
-            ),
-            Tool(
-                name="smelt",
-                func=lambda x: f"smelt({x})",
-                description="Smelt items (e.g., iron_ore -> iron_ingot). Format: from_slot,to_slot,quantity"
-            ),
-            Tool(
-                name="stop",
-                func=lambda x: "stop()",
-                description="Stop if task is complete or impossible"
-            ),
-        ]
-        
-        # Create agent
-        agent = initialize_agent(
-            llm=llm,
-            agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-            tools=tools,
-            verbose=True,
-            return_intermediate_steps=True,
-            max_iterations=3,
-            handle_parsing_errors=True,  # Handle LLM output parsing errors
-        )
-        
-        return agent
+        return llm
     
     def _load_examples(self, split: str = "val") -> List:
         """Load PlanCraft examples."""
@@ -293,13 +261,13 @@ What action should be taken next?"""
         return {}
     
     async def _run_single_agent(self, task: str) -> Tuple[str, int]:
-        """Run single agent."""
-        if hasattr(self.agent, '__call__'):
-            result = self.agent(task)
-        else:
-            result = self.agent.invoke({"input": task})
+        """Run single agent - direct LLM call."""
+        from langchain.schema import HumanMessage
         
-        output = result.get('output', str(result))
+        # Direct LLM call
+        response = self.agent.invoke([HumanMessage(content=task)])
+        output = response.content if hasattr(response, 'content') else str(response)
+        
         return output, 1
     
     async def _run_independent(self, task: str, n_agents: int) -> Tuple[str, int]:

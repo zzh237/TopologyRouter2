@@ -27,6 +27,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from routing_system import TopologyRoutingSystem
 from adapters.workbench_adapter_full import WorkBenchAdapterFull
+from adapters.plancraft_adapter_full import PlancraftAdapterFull
 
 
 async def run_workbench_full(n_tasks: int = 10, force_topology: int = None):
@@ -120,10 +121,99 @@ async def run_workbench_full(n_tasks: int = 10, force_topology: int = None):
     return results, system.get_router_stats()
 
 
+async def run_plancraft_full(n_tasks: int = 10, force_topology: int = None):
+    """Run PlanCraft with full LangChain integration.
+    
+    Args:
+        n_tasks: Number of tasks to run
+        force_topology: If set, use this topology for all tasks (0-4)
+    """
+    print("\n" + "="*80)
+    print("Running PlanCraft Benchmark (FULL VERSION)")
+    print("="*80)
+    print("Using: LangChain Agent + Environment Execution + Success Evaluation")
+    if force_topology is not None:
+        print(f"Forced Topology: {force_topology}")
+    print("="*80)
+    
+    system = TopologyRoutingSystem(llm_name="qwen-flash", domain="plancraft", n_rounds=3)
+    adapter = PlancraftAdapterFull(llm_name="qwen-flash", max_steps=30)
+    
+    # Load examples
+    examples = adapter._load_examples(split="val")[:n_tasks]
+    
+    results = []
+    total_success = 0
+    
+    for i, example in enumerate(examples, 1):
+        print(f"\n{'='*80}")
+        print(f"Task {i}/{len(examples)}: Craft {example.target}")
+        print(f"Complexity: {example.complexity_bin} ({example.complexity_split})")
+        print(f"{'='*80}")
+        
+        # Extract features
+        task_description = f"Craft {example.target} from available items"
+        features = system.feature_extractor.extract(task_description)
+        
+        if force_topology is not None:
+            topology_idx = force_topology
+        else:
+            topology_idx = system.router.select_topology(features)
+        
+        # Run task
+        success, cost, metadata = await adapter.run_task(example, topology_idx=topology_idx, n_agents=3)
+        
+        # Evaluate and update
+        reward, metrics = system.evaluator.evaluate(str(success), "True", cost)
+        system.router.update(topology_idx, reward, features, metadata)
+        
+        total_success += int(success)
+        accuracy = total_success / i
+        
+        results.append({
+            'task': f"Craft {example.target}",
+            'topology': system.router.get_topology_name(topology_idx),
+            'topology_idx': topology_idx,
+            'example_id': example.id,
+            'target': example.target,
+            'complexity': example.complexity,
+            'complexity_bin': example.complexity_bin,
+            'impossible': example.impossible,
+            'success': success,
+            'accuracy': accuracy,
+            'reward': reward,
+            'steps': metadata['steps'],
+            'num_llm_calls': metadata['num_llm_calls'],
+            'sequential_depth': metadata['sequential_depth'],
+            'comm_overhead': metadata['comm_overhead'],
+            'parallelization_factor': metadata['parallelization_factor'],
+            'memory_complexity': metadata['memory_complexity'],
+            'formulas': metadata.get('formulas', {}),
+            'error': metadata['error']
+        })
+        
+        print(f"\nResult:")
+        print(f"  Topology: {system.router.get_topology_name(topology_idx)}")
+        print(f"  Success: {success}")
+        print(f"  Steps: {metadata['steps']}")
+        print(f"  ")
+        print(f"  Complexity Metrics (n={metadata.get('n_agents', 3)}, k=1, r=1, d=2, p=1):")
+        formulas = metadata.get('formulas', {})
+        print(f"    LLM Calls: {metadata['num_llm_calls']} [{formulas.get('llm_calls', 'N/A')}]")
+        print(f"    Sequential Depth: {metadata['sequential_depth']} [{formulas.get('seq_depth', 'N/A')}]")
+        print(f"    Comm Overhead: {metadata['comm_overhead']} [{formulas.get('comm_overhead', 'N/A')}]")
+        print(f"    Parallelization: {metadata['parallelization_factor']}")
+        print(f"    Memory: O({metadata['memory_complexity']}) [{formulas.get('memory', 'N/A')}]")
+        print(f"  ")
+        print(f"  Cumulative Accuracy: {accuracy:.3f} ({total_success}/{i})")
+    
+    return results, system.get_router_stats()
+
+
 async def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--benchmark", choices=["workbench", "all"], 
-                       default="workbench", help="Which benchmark to run (only workbench has full adapter)")
+    parser.add_argument("--benchmark", choices=["workbench", "plancraft", "all"], 
+                       default="workbench", help="Which benchmark to run")
     parser.add_argument("--n_tasks", type=int, default=10, help="Number of tasks to run")
     parser.add_argument("--topology", type=int, choices=[0, 1, 2, 3, 4], default=None,
                        help="Force specific topology: 0=Single, 1=Independent, 2=Centralized, 3=Decentralized, 4=Hybrid")
@@ -134,6 +224,10 @@ async def main():
     if args.benchmark in ["workbench", "all"]:
         results, stats = await run_workbench_full(args.n_tasks, force_topology=args.topology)
         all_results['workbench_full'] = {'results': results, 'stats': stats}
+    
+    if args.benchmark in ["plancraft", "all"]:
+        results, stats = await run_plancraft_full(args.n_tasks, force_topology=args.topology)
+        all_results['plancraft_full'] = {'results': results, 'stats': stats}
     
     # Save results
     output_dir = Path("result")

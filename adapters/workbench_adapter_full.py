@@ -501,6 +501,8 @@ Provide:
                 'output': output,
             })
             print(f"Agent {i+1} proposed approach")
+            if i == 0:  # Print first proposal for debugging
+                print(f"  Sample: {output[:200]}...")
         
         # Round 2: Debate with peer-to-peer information sharing (reasoning only)
         print(f"\n=== Decentralized Round 2: Debate (Reasoning) ===")
@@ -544,22 +546,25 @@ Provide:
                 'output': output,
             })
             print(f"Agent {i+1} voted and refined")
+            if i == 0:  # Print first vote for debugging
+                print(f"  Sample: {output[:200]}...")
         
         # Final consensus: Execute the agreed-upon plan
         print(f"\n=== Decentralized Consensus: Execution ===")
         
         # Determine consensus (simple: use the most detailed/complete proposal)
         consensus_plan = self._determine_consensus(proposals, refined_proposals)
+        print(f"Consensus plan (first 300 chars): {consensus_plan[:300]}...")
         
-        # Execute the consensus plan
-        execution_prompt = f"""Based on the consensus from debate:
+        # Execute the consensus plan with clearer instructions
+        execution_prompt = f"""You are executing a task based on team consensus.
 
-Task: {task}
+Original Task: {task}
 
-Agreed-upon approach:
+The team has agreed on this approach:
 {consensus_plan}
 
-Now EXECUTE this plan using the appropriate tools."""
+Your job: Execute this plan NOW using the available tools. Do not overthink or refuse - just follow the agreed plan and use the tools to complete the task."""
         
         if hasattr(self.agent, '__call__'):
             result = self.agent(execution_prompt)
@@ -569,6 +574,8 @@ Now EXECUTE this plan using the appropriate tools."""
         
         consensus_actions = self._extract_tool_calls(result.get('intermediate_steps', []))
         print(f"Consensus execution: {len(consensus_actions)} actions")
+        if consensus_actions:
+            print(f"  Actions: {consensus_actions}")
         
         return consensus_actions, num_calls  # d*n + 1 calls
     

@@ -85,6 +85,7 @@ class PlancraftAdapterFull:
             verbose=True,
             return_intermediate_steps=True,
             max_iterations=3,
+            handle_parsing_errors=True,  # Handle LLM output parsing errors
         )
         
         return agent

@@ -143,6 +143,55 @@ class WorkBenchAdapterFull:
             # Restore original directory
             os.chdir(original_dir)
     
+    def _create_reasoning_only_agent(self):
+        """Create agent that only reasons without executing tools (for debate rounds)."""
+        from langchain_openai import ChatOpenAI
+        from dotenv import load_dotenv
+        
+        load_dotenv()
+        api_key = os.getenv("API_KEY")
+        base_url = os.getenv("BASE_URL")
+        
+        # Create LLM
+        llm = ChatOpenAI(
+            model_name=self.llm_name,
+            openai_api_key=api_key,
+            openai_api_base=base_url,
+            temperature=0,
+        )
+        
+        try:
+            from langchain.agents import initialize_agent, AgentType
+            
+            # Create agent with max_iterations=1 to force immediate answer
+            agent = initialize_agent(
+                llm=llm,
+                agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
+                tools=self.tools,
+                verbose=True,
+                return_intermediate_steps=True,
+                max_iterations=1,  # Force immediate Final Answer
+                early_stopping_method="force",  # Force stop after 1 iteration
+            )
+            
+            return agent
+            
+        except ImportError:
+            # Fallback: just return the LLM wrapped in a simple callable
+            class ReasoningOnlyAgent:
+                def __init__(self, llm):
+                    self.llm = llm
+                
+                def __call__(self, prompt):
+                    result = self.llm.invoke(prompt)
+                    return {'output': result.content if hasattr(result, 'content') else str(result)}
+                
+                def invoke(self, inputs):
+                    prompt = inputs.get('input', str(inputs))
+                    return self(prompt)
+            
+            return ReasoningOnlyAgent(llm)
+    
     async def run_task(self, query: Dict, topology_idx: int = 0, n_agents: int = 3) -> Tuple[bool, int, Dict]:
         """
         Run a WorkBench task with specified topology.
@@ -465,14 +514,8 @@ Provide a final summary of what was accomplished."""
         """
         num_calls = 0
         
-        # Create reasoning-only LLM (no tools) for debate rounds
-        from langchain_openai import ChatOpenAI
-        reasoning_llm = ChatOpenAI(
-            model_name=self.llm_name,
-            openai_api_key=os.getenv("API_KEY"),
-            openai_api_base=os.getenv("BASE_URL"),
-            temperature=0,
-        )
+        # Create reasoning-only agent (no tool execution) for debate rounds
+        reasoning_agent = self._create_reasoning_only_agent()
         
         # Round 1: Initial proposals (reasoning only, no tool execution)
         print(f"\n=== Decentralized Round 1: Initial Proposals (Reasoning) ===")
@@ -484,18 +527,22 @@ Task: {task}
 
 This is Round 1 (Proposal Phase). Propose your approach to solve this task.
 
-IMPORTANT: Only describe your plan, do NOT execute any tools yet. We will execute after reaching consensus.
+IMPORTANT: Only describe your plan in text, do NOT call any tools. Provide your answer directly.
 
 Provide:
 1. Your reasoning
-2. What tools you would use
-3. The sequence of actions"""
+2. What tools you would use (just list them, don't call them)
+3. The sequence of actions you would take
+
+Give your complete answer now without using any tools."""
             
-            # Use reasoning-only LLM (no tool execution)
-            result = reasoning_llm.invoke(agent_prompt)
+            if hasattr(reasoning_agent, '__call__'):
+                result = reasoning_agent(agent_prompt)
+            else:
+                result = reasoning_agent.invoke({"input": agent_prompt})
             num_calls += 1
             
-            output = result.content if hasattr(result, 'content') else str(result)
+            output = result.get('output', str(result))
             proposals.append({
                 'agent_id': i+1,
                 'output': output,
@@ -529,18 +576,22 @@ This is Round 2 (Debate Phase). Review the other agents' proposals:
 2. Should you refine your proposal or adopt another agent's approach?
 3. Vote for the best approach
 
-IMPORTANT: Still do NOT execute tools. Just refine your reasoning and vote.
+IMPORTANT: Still do NOT call any tools. Just provide your reasoning and vote in text.
 
 Provide:
 1. Your refined reasoning
 2. Your vote: "I vote for Agent X's approach" or "I vote for my own approach"
-3. Final recommended action sequence"""
+3. Final recommended action sequence
+
+Give your complete answer now without using any tools."""
             
-            # Use reasoning-only LLM (no tool execution)
-            result = reasoning_llm.invoke(debate_prompt)
+            if hasattr(reasoning_agent, '__call__'):
+                result = reasoning_agent(debate_prompt)
+            else:
+                result = reasoning_agent.invoke({"input": debate_prompt})
             num_calls += 1
             
-            output = result.content if hasattr(result, 'content') else str(result)
+            output = result.get('output', str(result))
             refined_proposals.append({
                 'agent_id': i+1,
                 'output': output,
@@ -556,7 +607,7 @@ Provide:
         consensus_plan = self._determine_consensus(proposals, refined_proposals)
         print(f"Consensus plan (first 300 chars): {consensus_plan[:300]}...")
         
-        # Execute the consensus plan with clearer instructions
+        # Execute the consensus plan with the FULL agent (with tools)
         execution_prompt = f"""You are executing a task based on team consensus.
 
 Original Task: {task}
@@ -564,7 +615,7 @@ Original Task: {task}
 The team has agreed on this approach:
 {consensus_plan}
 
-Your job: Execute this plan NOW using the available tools. Do not overthink or refuse - just follow the agreed plan and use the tools to complete the task."""
+Your job: Execute this plan NOW using the available tools. Follow the agreed plan and use the tools to complete the task."""
         
         if hasattr(self.agent, '__call__'):
             result = self.agent(execution_prompt)

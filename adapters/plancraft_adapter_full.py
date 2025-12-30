@@ -409,7 +409,7 @@ What action should be taken next?"""
             return int(slot_str)
         
         # Pattern 1: LangChain format "Action Input: I17, I1, 1" or just "I17, I1, 1"
-        simple_match = re.search(r'(?:Action Input:\s*)?\[?([A-CI]?\d+)\]?\s*,\s*\[?([A-CI]?\d+)\]?\s*,\s*(\d+)', action_str, re.IGNORECASE)
+        simple_match = re.search(r'(?:Action Input:\s*)?\[?([A-C]?[0-9]+|I[0-9]+)\]?\s*,\s*\[?([A-C]?[0-9]+|I[0-9]+)\]?\s*,\s*(\d+)', action_str, re.IGNORECASE)
         if simple_match:
             try:
                 slot_from = parse_slot(simple_match.group(1))
@@ -429,7 +429,7 @@ What action should be taken next?"""
                 return ""
         
         # Pattern 2: PlanCraft format "move: from [I17] to [I1] with quantity 1"
-        move_match = re.search(r'move[:\(]?\s*(?:from\s+)?\[?([A-CI]?\d+)\]?\s*,?\s*(?:to\s+)?\[?([A-CI]?\d+)\]?\s*,?\s*(?:with\s+quantity\s+)?(\d+)', action_str, re.IGNORECASE)
+        move_match = re.search(r'move[:\(]?\s*(?:from\s+)?\[?([A-C]?[0-9]+|I[0-9]+)\]?\s*,?\s*(?:to\s+)?\[?([A-C]?[0-9]+|I[0-9]+)\]?\s*,?\s*(?:with\s+quantity\s+)?(\d+)', action_str, re.IGNORECASE)
         if move_match:
             try:
                 slot_from = parse_slot(move_match.group(1))
@@ -446,7 +446,7 @@ What action should be taken next?"""
                 return ""
         
         # Pattern 3: Smelt format
-        smelt_match = re.search(r'smelt[:\(]?\s*(?:from\s+)?\[?([A-CI]?\d+)\]?\s*,?\s*(?:to\s+)?\[?([A-CI]?\d+)\]?\s*,?\s*(?:with\s+quantity\s+)?(\d+)', action_str, re.IGNORECASE)
+        smelt_match = re.search(r'smelt[:\(]?\s*(?:from\s+)?\[?([A-C]?[0-9]+|I[0-9]+)\]?\s*,?\s*(?:to\s+)?\[?([A-C]?[0-9]+|I[0-9]+)\]?\s*,?\s*(?:with\s+quantity\s+)?(\d+)', action_str, re.IGNORECASE)
         if smelt_match:
             try:
                 slot_from = parse_slot(smelt_match.group(1))

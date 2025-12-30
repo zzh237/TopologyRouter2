@@ -357,14 +357,13 @@ What action should be taken next?"""
     def _parse_action(self, action_str: str):
         """Parse agent's action string into PlanCraft format."""
         import re
-        from plancraft.environment.actions import StopAction
         
         action_str = action_str.strip()
         print(f"[DEBUG] Parsing action: {action_str[:100]}...")
         
-        # Check for stop/impossible - return StopAction object
+        # Check for stop/impossible - return string that env can parse
         if "stop" in action_str.lower() or "impossible" in action_str.lower():
-            return StopAction(reason="Agent decided to stop")
+            return "impossible: task cannot be completed"
         
         # Helper to convert slot notation
         def parse_slot(slot_str: str) -> int:

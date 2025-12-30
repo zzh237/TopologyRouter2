@@ -26,11 +26,19 @@ Available Actions (OFFICIAL FORMAT):
 - impossible: <reason>
 
 Slot Format:
-- [0]: Crafting output slot (read-only)
+- [0]: Crafting output slot (read-only, auto-generates result)
 - [A1]-[C3]: Crafting grid (3x3)
 - [I1]-[I36]: Inventory storage
 
-Example: move: from [I17] to [A1] with quantity 1
+How Crafting Works:
+1. Move items into crafting grid [A1]-[C3] in the correct recipe pattern
+2. If pattern is valid, result AUTOMATICALLY appears in [0]
+3. Move result from [0] to inventory to complete craft
+4. No explicit "craft" command needed - it's automatic!
+
+Example crafting flow:
+  move: from [I17] to [A1] with quantity 1  # Place ingredient
+  move: from [0] to [I1] with quantity 1    # Take result
 
 Important Rules:
 - Use EXACT format: "action: from [slot] to [slot] with quantity N"
@@ -124,20 +132,21 @@ Example: move: from [I17] to [A1] with quantity 1"""
     
     @staticmethod
     def get_decision_few_shot():
-        return """Example 1:
-Inventory: iron_ingot in slot 10, stick in slot 11
-Target: iron_pickaxe
-Action: move(10, 2, 1)  # Move iron to crafting grid
+        return """Example 1 - Crafting stained glass pane:
+Inventory: cyan_stained_glass in [I17]
+Target: cyan_stained_glass_pane
+Step 1: move: from [I17] to [A1] with quantity 1  # Place glass in grid
+Step 2: move: from [0] to [I1] with quantity 8    # Take 8 panes from output
 
-Example 2:
-Inventory: iron_ore in slot 10
+Example 2 - Smelting:
+Inventory: iron_ore in [I10]
 Target: iron_ingot
-Action: smelt(10, 11, 1)  # Smelt ore to ingot
+Action: smelt: from [I10] to [I11] with quantity 1
 
-Example 3:
-Inventory: wood_planks in slot 10
+Example 3 - Impossible:
+Inventory: wood_planks in [I10]
 Target: diamond_pickaxe
-Action: stop()  # Impossible - no diamonds available"""
+Action: impossible: no diamonds available"""
     
     def get_role_connection(self):
         return [("Minecraft Crafting Agent", "Minecraft Crafting Agent")]

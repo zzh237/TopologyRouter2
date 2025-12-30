@@ -391,6 +391,7 @@ What action should be taken next?"""
         import re
         
         action_str = action_str.strip()
+        print(f"[DEBUG] Parsing action: {action_str[:100]}...")  # Debug
         
         # Check for stop
         if "stop" in action_str.lower():
@@ -411,10 +412,12 @@ What action should be taken next?"""
         # Pattern 1: LangChain format "Action Input: I17, I1, 1" or just "I17, I1, 1"
         simple_match = re.search(r'(?:Action Input:\s*)?\[?([A-C]?[0-9]+|I[0-9]+)\]?\s*,\s*\[?([A-C]?[0-9]+|I[0-9]+)\]?\s*,\s*(\d+)', action_str, re.IGNORECASE)
         if simple_match:
+            print(f"[DEBUG] Pattern 1 matched: {simple_match.groups()}")  # Debug
             try:
                 slot_from = parse_slot(simple_match.group(1))
                 slot_to = parse_slot(simple_match.group(2))
                 quantity = int(simple_match.group(3))
+                print(f"[DEBUG] Parsed slots: from={slot_from}, to={slot_to}, qty={quantity}")  # Debug
                 
                 if slot_from == slot_to:
                     print(f"[Validation Error] Cannot move from slot {slot_from} to itself. Skipping action.")
@@ -462,6 +465,7 @@ What action should be taken next?"""
                 print(f"[Parse Error] Failed to parse smelt action: {e}")
                 return ""
         
+        print(f"[DEBUG] No pattern matched, returning empty string")  # Debug
         return ""
 
 

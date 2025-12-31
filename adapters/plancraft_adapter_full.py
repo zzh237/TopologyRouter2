@@ -231,24 +231,36 @@ class PlancraftAdapterFull:
             state_text = observation.get("text", "")
             target = observation.get("target", example.target)
             
-            # Build prompt
-            task_prompt = f"""Current Inventory State:
+            # Build prompt with PlanCraft crafting mechanics
+            task_prompt = f"""You are crafting in Minecraft. You have a 3x3 crafting grid:
+  [A1] [A2] [A3]
+  [B1] [B2] [B3]
+  [C1] [C2] [C3]
+And an output slot [0]. Your inventory has slots [I1] to [I36].
+
+Crafting Mechanics:
+1. Place ingredients from inventory (I1-I36) into the crafting grid (A1-C3) in the correct pattern
+2. If the pattern is correct, the crafted item appears in output slot [0]
+3. Move the item from [0] to your inventory to complete the craft
+4. You CANNOT move items directly into [0] - it only receives crafted outputs
+
+Current Inventory:
 {state_text}
 
 Target: Craft {target}
 
 Available Actions:
-- move(from_slot, to_slot, quantity): Move items between slots
-- smelt(from_slot, to_slot, quantity): Smelt items (e.g., iron_ore -> iron_ingot)
-- stop(): Stop if task is complete or impossible
+- move: Use format 'I17,A1,1' to move 1 item from inventory slot 17 to crafting slot A1
+- smelt: Use format 'I10,I11,1' to smelt items
+- stop: Use when task is complete or impossible
 
-IMPORTANT: You MUST respond in this format:
+IMPORTANT: Respond in this format:
 Action: <tool_name>
 Action Input: <parameters>
 
 Example:
 Action: move
-Action Input: 10,1,1
+Action Input: I17,A1,1
 
 What action should be taken next?"""
             

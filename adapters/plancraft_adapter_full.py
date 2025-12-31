@@ -71,16 +71,16 @@ class PlancraftAdapterFull:
                 return f"Error: Invalid format '{params}'"
             
             from_slot, to_slot, qty = match.groups()
+            from_idx = self._convert_slot(from_slot)
+            to_idx = self._convert_slot(to_slot)
+            
+            if from_idx == to_idx:
+                return f"Error: Cannot move from slot {from_idx} to itself"
+            
             action_str = f"move: from [{from_slot}] to [{to_slot}] with quantity {qty}"
             obs, reward, term, trunc, info = self.current_env.step(action_str)
             
-            # Store state for outer loop to access
-            self.last_obs = obs
-            self.last_reward = reward
-            self.last_terminated = term
-            self.last_truncated = trunc
-            
-            return f"Moved. Reward: {reward}. State: {obs.get('text', '')[:100]}"
+            return f"Moved {qty} items from {from_slot} to {to_slot}. Reward: {reward}"
         
         def execute_smelt(params: str) -> str:
             """Execute smelt action on current environment."""
@@ -96,13 +96,7 @@ class PlancraftAdapterFull:
             action_str = f"smelt: from [{from_slot}] to [{to_slot}] with quantity {qty}"
             obs, reward, term, trunc, info = self.current_env.step(action_str)
             
-            # Store state for outer loop to access
-            self.last_obs = obs
-            self.last_reward = reward
-            self.last_terminated = term
-            self.last_truncated = trunc
-            
-            return f"Smelted. Reward: {reward}. State: {obs.get('text', '')[:100]}"
+            return f"Smelted {qty} items from {from_slot} to {to_slot}. Reward: {reward}"
         
         def execute_stop(params: str) -> str:
             """Execute stop action."""
@@ -110,13 +104,6 @@ class PlancraftAdapterFull:
                 return "Error: No environment"
             
             obs, reward, term, trunc, info = self.current_env.step("stop()")
-            
-            # Store state for outer loop to access
-            self.last_obs = obs
-            self.last_reward = reward
-            self.last_terminated = term
-            self.last_truncated = trunc
-            
             return f"Stopped. Reward: {reward}"
         
         tools = [
@@ -149,32 +136,6 @@ class PlancraftAdapterFull:
         )
         
         return agent
-    
-    def _convert_slot(self, slot_str: str) -> int:
-        """Convert slot notation to absolute index.
-        
-        PlanCraft slot encoding:
-        - I1-I36: Inventory slots → indices 10-45 (add 9)
-        - A1-C3: Crafting grid → indices 1-9
-        - 0: Output slot → index 0
-        """
-        slot_str = slot_str.strip().upper().replace('[', '').replace(']', '')
-        
-        # Inventory slots: I1 → 10, I17 → 26
-        if slot_str.startswith('I'):
-            return int(slot_str[1:]) + 9
-        
-        # Crafting grid slots
-        grid_map = {
-            'A1': 1, 'A2': 2, 'A3': 3,
-            'B1': 4, 'B2': 5, 'B3': 6,
-            'C1': 7, 'C2': 8, 'C3': 9
-        }
-        if slot_str in grid_map:
-            return grid_map[slot_str]
-        
-        # Output slot or numeric
-        return int(slot_str)
     
     def _load_examples(self, split: str = "val") -> List:
         """Load PlanCraft examples."""
@@ -231,36 +192,24 @@ class PlancraftAdapterFull:
             state_text = observation.get("text", "")
             target = observation.get("target", example.target)
             
-            # Build prompt with PlanCraft crafting mechanics
-            task_prompt = f"""You are crafting in Minecraft. You have a 3x3 crafting grid:
-  [A1] [A2] [A3]
-  [B1] [B2] [B3]
-  [C1] [C2] [C3]
-And an output slot [0]. Your inventory has slots [I1] to [I36].
-
-Crafting Mechanics:
-1. Place ingredients from inventory (I1-I36) into the crafting grid (A1-C3) in the correct pattern
-2. If the pattern is correct, the crafted item appears in output slot [0]
-3. Move the item from [0] to your inventory to complete the craft
-4. You CANNOT move items directly into [0] - it only receives crafted outputs
-
-Current Inventory:
+            # Build prompt
+            task_prompt = f"""Current Inventory State:
 {state_text}
 
 Target: Craft {target}
 
 Available Actions:
-- move: Use format 'I17,A1,1' to move 1 item from inventory slot 17 to crafting slot A1
-- smelt: Use format 'I10,I11,1' to smelt items
-- stop: Use when task is complete or impossible
+- move(from_slot, to_slot, quantity): Move items between slots
+- smelt(from_slot, to_slot, quantity): Smelt items (e.g., iron_ore -> iron_ingot)
+- stop(): Stop if task is complete or impossible
 
-IMPORTANT: Respond in this format:
+IMPORTANT: You MUST respond in this format:
 Action: <tool_name>
 Action Input: <parameters>
 
 Example:
 Action: move
-Action Input: I17,A1,1
+Action Input: 10,1,1
 
 What action should be taken next?"""
             
@@ -279,15 +228,11 @@ What action should be taken next?"""
             num_llm_calls += calls
             step_count += 1
             
-            # Get updated state from last tool execution
-            if hasattr(self, 'last_obs'):
-                observation = self.last_obs
-                reward = self.last_reward
-                terminated = self.last_terminated
-                truncated = self.last_truncated
-            else:
-                # No tool was executed, get current state
-                observation, reward, terminated, truncated, info = env.step("")
+            # Get updated observation (tools already executed on env)
+            observation = env.env.render()
+            reward = env.env.reward
+            terminated = env.env.terminated
+            truncated = env.env.truncated
             
             action_history.append(action_str)
             

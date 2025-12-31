@@ -137,6 +137,29 @@ class PlancraftAdapterFull:
         
         return agent
     
+    def _convert_slot(self, slot_str: str) -> int:
+        """Convert slot notation to index for validation.
+        
+        PlanCraft slot encoding:
+        - I1-I36: Inventory slots → indices 10-45 (add 9)
+        - A1-C3: Crafting grid → indices 1-9
+        - 0: Output slot → index 0
+        """
+        slot_str = slot_str.strip().upper().replace('[', '').replace(']', '')
+        
+        if slot_str.startswith('I'):
+            return int(slot_str[1:]) + 9
+        
+        grid_map = {
+            'A1': 1, 'A2': 2, 'A3': 3,
+            'B1': 4, 'B2': 5, 'B3': 6,
+            'C1': 7, 'C2': 8, 'C3': 9
+        }
+        if slot_str in grid_map:
+            return grid_map[slot_str]
+        
+        return int(slot_str)
+    
     def _load_examples(self, split: str = "val") -> List:
         """Load PlanCraft examples."""
         try:

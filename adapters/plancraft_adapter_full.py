@@ -71,16 +71,16 @@ class PlancraftAdapterFull:
                 return f"Error: Invalid format '{params}'"
             
             from_slot, to_slot, qty = match.groups()
-            from_idx = self._convert_slot(from_slot)
-            to_idx = self._convert_slot(to_slot)
-            
-            if from_idx == to_idx:
-                return f"Error: Cannot move from slot {from_idx} to itself"
-            
             action_str = f"move: from [{from_slot}] to [{to_slot}] with quantity {qty}"
             obs, reward, term, trunc, info = self.current_env.step(action_str)
             
-            return f"Moved {qty} items from {from_slot} to {to_slot}. Reward: {reward}"
+            # Store state for outer loop to access
+            self.last_obs = obs
+            self.last_reward = reward
+            self.last_terminated = term
+            self.last_truncated = trunc
+            
+            return f"Moved. Reward: {reward}. State: {obs.get('text', '')[:100]}"
         
         def execute_smelt(params: str) -> str:
             """Execute smelt action on current environment."""
@@ -96,7 +96,13 @@ class PlancraftAdapterFull:
             action_str = f"smelt: from [{from_slot}] to [{to_slot}] with quantity {qty}"
             obs, reward, term, trunc, info = self.current_env.step(action_str)
             
-            return f"Smelted {qty} items from {from_slot} to {to_slot}. Reward: {reward}"
+            # Store state for outer loop to access
+            self.last_obs = obs
+            self.last_reward = reward
+            self.last_terminated = term
+            self.last_truncated = trunc
+            
+            return f"Smelted. Reward: {reward}. State: {obs.get('text', '')[:100]}"
         
         def execute_stop(params: str) -> str:
             """Execute stop action."""
@@ -104,6 +110,13 @@ class PlancraftAdapterFull:
                 return "Error: No environment"
             
             obs, reward, term, trunc, info = self.current_env.step("stop()")
+            
+            # Store state for outer loop to access
+            self.last_obs = obs
+            self.last_reward = reward
+            self.last_terminated = term
+            self.last_truncated = trunc
+            
             return f"Stopped. Reward: {reward}"
         
         tools = [
@@ -254,11 +267,15 @@ What action should be taken next?"""
             num_llm_calls += calls
             step_count += 1
             
-            # Get updated observation (tools already executed on env)
-            observation = env.env.render()
-            reward = env.env.reward
-            terminated = env.env.terminated
-            truncated = env.env.truncated
+            # Get updated state from last tool execution
+            if hasattr(self, 'last_obs'):
+                observation = self.last_obs
+                reward = self.last_reward
+                terminated = self.last_terminated
+                truncated = self.last_truncated
+            else:
+                # No tool was executed, get current state
+                observation, reward, terminated, truncated, info = env.step("")
             
             action_history.append(action_str)
             

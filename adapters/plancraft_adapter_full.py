@@ -228,11 +228,15 @@ What action should be taken next?"""
             num_llm_calls += calls
             step_count += 1
             
-            # Get updated observation (tools already executed on env)
-            observation = env.env.render()
-            reward = env.env.reward
-            terminated = env.env.terminated
-            truncated = env.env.truncated
+            # Get updated state from last tool execution
+            if hasattr(self, 'last_obs'):
+                observation = self.last_obs
+                reward = self.last_reward
+                terminated = self.last_terminated
+                truncated = self.last_truncated
+            else:
+                # No tool was executed, get current state
+                observation, reward, terminated, truncated, info = env.step("")
             
             action_history.append(action_str)
             

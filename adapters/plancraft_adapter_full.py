@@ -35,6 +35,7 @@ class PlancraftAdapterFull:
         """
         self.llm_name = llm_name
         self.max_steps = max_steps
+        self.current_env = None  # Store current environment for tool execution
         
         # Create LangChain agent
         self.agent = self._create_langchain_agent()
@@ -58,37 +59,109 @@ class PlancraftAdapterFull:
             temperature=0,
         )
         
-        # Define PlanCraft action tools
+        # Define PlanCraft action tools that execute on environment
+        def execute_move(params: str) -> str:
+            """Execute move action on current environment."""
+            if not self.current_env:
+                return "Error: No environment"
+            
+            import re
+            match = re.match(r'([A-Z]?\d+),\s*([A-Z]?\d+),\s*(\d+)', params.strip())
+            if not match:
+                return f"Error: Invalid format '{params}'"
+            
+            from_slot, to_slot, qty = match.groups()
+            from_idx = self._convert_slot(from_slot)
+            to_idx = self._convert_slot(to_slot)
+            
+            if from_idx == to_idx:
+                return f"Error: Cannot move from slot {from_idx} to itself"
+            
+            action_str = f"move: from [{from_slot}] to [{to_slot}] with quantity {qty}"
+            obs, reward, term, trunc, info = self.current_env.step(action_str)
+            
+            return f"Moved {qty} items from {from_slot} to {to_slot}. Reward: {reward}"
+        
+        def execute_smelt(params: str) -> str:
+            """Execute smelt action on current environment."""
+            if not self.current_env:
+                return "Error: No environment"
+            
+            import re
+            match = re.match(r'([A-Z]?\d+),\s*([A-Z]?\d+),\s*(\d+)', params.strip())
+            if not match:
+                return f"Error: Invalid format '{params}'"
+            
+            from_slot, to_slot, qty = match.groups()
+            action_str = f"smelt: from [{from_slot}] to [{to_slot}] with quantity {qty}"
+            obs, reward, term, trunc, info = self.current_env.step(action_str)
+            
+            return f"Smelted {qty} items from {from_slot} to {to_slot}. Reward: {reward}"
+        
+        def execute_stop(params: str) -> str:
+            """Execute stop action."""
+            if not self.current_env:
+                return "Error: No environment"
+            
+            obs, reward, term, trunc, info = self.current_env.step("stop()")
+            return f"Stopped. Reward: {reward}"
+        
         tools = [
             Tool(
                 name="move",
-                func=lambda x: f"move({x})",
-                description="Move items between slots. Format: from_slot,to_slot,quantity (e.g., '10,1,1')"
+                func=execute_move,
+                description="Move items between slots. Format: from_slot,to_slot,quantity (e.g., 'I17,A1,1')"
             ),
             Tool(
                 name="smelt",
-                func=lambda x: f"smelt({x})",
-                description="Smelt items (e.g., iron_ore -> iron_ingot). Format: from_slot,to_slot,quantity"
+                func=execute_smelt,
+                description="Smelt items. Format: from_slot,to_slot,quantity (e.g., 'I10,I11,1')"
             ),
             Tool(
                 name="stop",
-                func=lambda x: "stop()",
-                description="Stop if task is complete or impossible"
+                func=execute_stop,
+                description="Stop when task is complete or impossible"
             ),
         ]
         
-        # Create agent
+        # Create agent with single iteration per call
         agent = initialize_agent(
             llm=llm,
             agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
             tools=tools,
             verbose=True,
             return_intermediate_steps=True,
-            max_iterations=3,
-            handle_parsing_errors=True,  # Handle LLM output parsing errors
+            max_iterations=1,  # Only 1 action per agent call
+            handle_parsing_errors=True,
         )
         
         return agent
+    
+    def _convert_slot(self, slot_str: str) -> int:
+        """Convert slot notation to absolute index.
+        
+        PlanCraft slot encoding:
+        - I1-I36: Inventory slots → indices 10-45 (add 9)
+        - A1-C3: Crafting grid → indices 1-9
+        - 0: Output slot → index 0
+        """
+        slot_str = slot_str.strip().upper().replace('[', '').replace(']', '')
+        
+        # Inventory slots: I1 → 10, I17 → 26
+        if slot_str.startswith('I'):
+            return int(slot_str[1:]) + 9
+        
+        # Crafting grid slots
+        grid_map = {
+            'A1': 1, 'A2': 2, 'A3': 3,
+            'B1': 4, 'B2': 5, 'B3': 6,
+            'C1': 7, 'C2': 8, 'C3': 9
+        }
+        if slot_str in grid_map:
+            return grid_map[slot_str]
+        
+        # Output slot or numeric
+        return int(slot_str)
     
     def _load_examples(self, split: str = "val") -> List:
         """Load PlanCraft examples."""
@@ -128,6 +201,9 @@ class PlancraftAdapterFull:
             resolution="high",
             use_text_inventory=True
         )
+        
+        # Set as current environment for tools
+        self.current_env = env
         
         # Initialize
         observation, reward, terminated, truncated, info = env.step("")
@@ -178,14 +254,16 @@ What action should be taken next?"""
             num_llm_calls += calls
             step_count += 1
             
-            # Parse and execute action
-            parsed_action = self._parse_action(action_str)
-            action_history.append(parsed_action)
+            # Get updated observation (tools already executed on env)
+            observation = env.env.render()
+            reward = env.env.reward
+            terminated = env.env.terminated
+            truncated = env.env.truncated
             
-            observation, reward, terminated, truncated, info = env.step(parsed_action)
+            action_history.append(action_str)
             
             # Check success
-            if reward > 0:
+            if reward > 0 or terminated or truncated:
                 break
         
         success = reward > 0

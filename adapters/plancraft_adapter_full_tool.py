@@ -71,16 +71,26 @@ class PlancraftAdapterFull:
                 return f"Error: Invalid format '{params}'"
             
             from_slot, to_slot, qty = match.groups()
-            from_idx = self._convert_slot(from_slot)
-            to_idx = self._convert_slot(to_slot)
             
-            if from_idx == to_idx:
-                return f"Error: Cannot move from slot {from_idx} to itself"
+            # Validate: from != to
+            try:
+                from_idx = self._convert_slot(from_slot)
+                to_idx = self._convert_slot(to_slot)
+                if from_idx == to_idx:
+                    return f"Error: Cannot move from {from_slot} to itself"
+            except:
+                pass
             
             action_str = f"move: from [{from_slot}] to [{to_slot}] with quantity {qty}"
             obs, reward, term, trunc, info = self.current_env.step(action_str)
             
-            return f"Moved {qty} items from {from_slot} to {to_slot}. Reward: {reward}"
+            # Store state
+            self.last_obs = obs
+            self.last_reward = reward
+            self.last_terminated = term
+            self.last_truncated = trunc
+            
+            return f"Moved. Reward: {reward}. State: {obs.get('text', '')[:100]}"
         
         def execute_smelt(params: str) -> str:
             """Execute smelt action on current environment."""
@@ -96,7 +106,13 @@ class PlancraftAdapterFull:
             action_str = f"smelt: from [{from_slot}] to [{to_slot}] with quantity {qty}"
             obs, reward, term, trunc, info = self.current_env.step(action_str)
             
-            return f"Smelted {qty} items from {from_slot} to {to_slot}. Reward: {reward}"
+            # Store state
+            self.last_obs = obs
+            self.last_reward = reward
+            self.last_terminated = term
+            self.last_truncated = trunc
+            
+            return f"Smelted. Reward: {reward}. State: {obs.get('text', '')[:100]}"
         
         def execute_stop(params: str) -> str:
             """Execute stop action."""
@@ -104,6 +120,13 @@ class PlancraftAdapterFull:
                 return "Error: No environment"
             
             obs, reward, term, trunc, info = self.current_env.step("stop()")
+            
+            # Store state
+            self.last_obs = obs
+            self.last_reward = reward
+            self.last_terminated = term
+            self.last_truncated = trunc
+            
             return f"Stopped. Reward: {reward}"
         
         tools = [
@@ -416,34 +439,100 @@ What action should be taken next?"""
         return final_action, n_agents + 1
     
     async def _run_centralized(self, task: str, n_agents: int) -> Tuple[str, int]:
-        """Run Centralized MAS: orchestrator + workers."""
-        # Orchestrator decomposes
-        orch_prompt = f"As orchestrator, analyze this task and provide guidance: {task}"
+        """Run Centralized MAS: orchestrator delegates to workers."""
+        num_calls = 0
+        
+        # Orchestrator: decompose task into subtasks
+        orch_prompt = f"""You are an orchestrator coordinating up to {n_agents} worker agents.
+
+Task: {task}
+
+Analyze this task and decide:
+1. How many workers do you need (0 to {n_agents})?
+2. What should each worker do?
+
+IMPORTANT: Only use as many workers as needed. If the task is simple or sequential, use fewer workers.
+
+Provide your plan in this format:
+Number of workers needed: [1-{n_agents}]
+Worker 1: [specific subtask]
+Worker 2: [specific subtask or "not needed"]
+Worker 3: [specific subtask or "not needed"]
+
+Example (simple task): 
+Number of workers needed: 1
+Worker 1: Complete the full task
+Worker 2: not needed
+Worker 3: not needed"""
+        
         if hasattr(self.agent, '__call__'):
-            orch_result = self.agent(orch_prompt)
+            plan_result = self.agent(orch_prompt)
         else:
-            orch_result = self.agent.invoke({"input": orch_prompt})
+            plan_result = self.agent.invoke({"input": orch_prompt})
+        num_calls += 1
         
-        guidance = orch_result.get('output', str(orch_result))
+        plan_text = plan_result.get('output', str(plan_result))
         
-        # Workers execute
+        # Parse orchestrator's plan to extract subtasks
+        subtasks = self._parse_orchestrator_plan(plan_text, n_agents)
+        
+        # Workers: execute assigned subtasks
         worker_results = []
-        for i in range(n_agents):
-            worker_prompt = f"{task}\n\nOrchestrator guidance: {guidance}"
-            if hasattr(self.agent, '__call__'):
-                result = self.agent(worker_prompt)
-            else:
-                result = self.agent.invoke({"input": worker_prompt})
-            worker_results.append(result.get('output', str(result)))
+        for i, subtask in enumerate(subtasks):
+            if subtask and subtask.lower() not in ['not needed', 'none', 'n/a']:
+                worker_prompt = f"""You are Worker {i+1}. Your assigned subtask:
+
+{subtask}
+
+Original task context: {task}
+
+Complete your assigned subtask."""
+                
+                if hasattr(self.agent, '__call__'):
+                    result = self.agent(worker_prompt)
+                else:
+                    result = self.agent.invoke({"input": worker_prompt})
+                num_calls += 1
+                
+                worker_results.append(result.get('output', str(result)))
         
-        # Orchestrator synthesizes
-        synth_prompt = f"Synthesize these worker results: {worker_results}"
+        # Orchestrator: synthesize results
+        synth_prompt = f"""You are the orchestrator. Workers have completed their subtasks for:
+
+Task: {task}
+
+Worker results: {len(worker_results)} workers completed
+
+Provide the final action."""
+        
         if hasattr(self.agent, '__call__'):
             final_result = self.agent(synth_prompt)
         else:
             final_result = self.agent.invoke({"input": synth_prompt})
+        num_calls += 1
         
-        return final_result.get('output', str(final_result)), n_agents + 2
+        return final_result.get('output', str(final_result)), num_calls
+    
+    def _parse_orchestrator_plan(self, plan_text: str, n_agents: int) -> list:
+        """Parse orchestrator's plan to extract subtasks for each worker."""
+        subtasks = []
+        lines = plan_text.split('\n')
+        
+        for i in range(1, n_agents + 1):
+            worker_pattern = f"Worker {i}:"
+            for line in lines:
+                if worker_pattern in line:
+                    subtask = line.split(worker_pattern, 1)[1].strip()
+                    subtasks.append(subtask)
+                    break
+            else:
+                subtasks.append("")
+        
+        # If no subtasks were parsed, fall back to full task for first worker
+        if not any(subtasks):
+            subtasks[0] = "Complete the full task"
+        
+        return subtasks
     
     async def _run_decentralized(self, task: str, n_agents: int) -> Tuple[str, int]:
         """Run Decentralized MAS: peer debate."""

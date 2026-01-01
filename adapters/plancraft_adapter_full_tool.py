@@ -154,7 +154,7 @@ class PlancraftAdapterFull:
             tools=tools,
             verbose=True,
             return_intermediate_steps=True,
-            max_iterations=1,  # Only 1 action per agent call
+            max_iterations=5,  # Only 1 action per agent call
             handle_parsing_errors=True,
         )
         
